@@ -12,13 +12,13 @@ This is a Python application for analyzing fly behavior in videos. It uses PyQt6
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/yourusername/fly-behavior-analysis.git
+   git clone https://github.com/SomeOne1Random/DrosophilamelanogasterLatencyCopulationDurationFinder.git
    ```
 
 2. Navigate to the project directory:
 
    ```bash
-   cd fly-behavior-analysis
+   cd DrosophilamelanogasterLatencyCopulationDurationFinder
    ```
 
 3. Create a virtual environment (optional but recommended):
@@ -67,11 +67,5 @@ Contributions are welcome! If you find any issues or have improvements to sugges
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU 3.0 License - see the [LICENSE](LICENSE) file for details.
 ```
-
-Replace `"https://github.com/yourusername/fly-behavior-analysis.git"` with the actual URL of your GitHub repository.
-
-Make sure to provide clear and concise instructions for installation, usage, and contributing to your project. Including a license is also essential for making your project open source.
-
-Once you've created the `README.md` file, it will be displayed on your GitHub repository's homepage, providing a user-friendly introduction to your project.
