@@ -1,6 +1,4 @@
 # Drosophila melanogaster Latency Copulation Duration Finder
-To provide clear instructions on the homepage of your GitHub repository, you can create a `README.md` file. This file is automatically displayed on the homepage of your repository and is a great place to explain what your project does and how to install and use it. Here's a template you can follow:
-
 This is a Python application for analyzing fly behavior in videos. It uses PyQt6 for the GUI and OpenCV for video processing.
 
 ## Features
