@@ -1,4 +1,4 @@
-# Drosophila melanogaster Latency Copulation Duration Finder
+# FlyFlirt: Mating Moves Monitor
 This is a Python application for analyzing fly behavior in videos. It uses PyQt6 for the GUI and OpenCV for video processing.
 
 ## Features
