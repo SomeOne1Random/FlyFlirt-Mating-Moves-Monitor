@@ -1,5 +1,6 @@
 import sys
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QFileDialog, QLineEdit, QListWidget
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QPushButton, QLabel, QFileDialog, QLineEdit, QListWidget, QVBoxLayout,
+                             QHBoxLayout, QTableWidget, QMessageBox, QGroupBox,  QScrollArea, QVBoxLayout, QWidget)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage
 import cv2
@@ -95,7 +96,7 @@ class VideoProcessingThread(QThread):
         contours_list.sort(key=lambda ctr: cv2.boundingRect(ctr)[0])
 
         # Store initial contours if frame_count <= 100
-        if frame_count <= 100:
+        if frame_count <= 500:
             initial_contours.clear()
             self.roi_ids.clear()  # Clear ROI IDs
             for i, contour in enumerate(contours_list):
@@ -218,71 +219,168 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        # Set up the main window attributes
         self.setWindowTitle("Fly Behavior Analysis")
-        self.setGeometry(200, 200, 800, 810)
+        self.setGeometry(200, 200, 900, 1400)  # Adjust size as needed
 
+        # Paths and initial setups
         self.video_path = None
         self.initial_contours = []
-
-        self.video_label = QLabel(self)
-        self.video_label.setGeometry(10, 10, 780, 440)
-
-        self.mating_duration_label = QLabel(self)
-        self.mating_duration_label.setGeometry(10, 360, 700, 150)
-
-        self.frame_label = QLabel('Frame: 0', self)
-        self.frame_label.move(200, 410)
-        self.time_label = QLabel('Time (s): 0', self)
-        self.time_label.move(200, 430)
-        self.verified_mating_times_label = QLabel(self)
-        self.verified_mating_times_label.setGeometry(330, 350, 780, 120)
-
-
-        self.fps_input = QLineEdit(self)
-        self.fps_input.setGeometry(10, 630, 780, 30)
-        self.fps_input.setPlaceholderText("Enter Video FPS")
-
-        self.select_button = QPushButton("Select Video", self)
-        self.select_button.setGeometry(10, 510, 780, 30)
-        self.select_button.clicked.connect(self.select_video)
-
-
-        self.start_button = QPushButton("Start Processing", self)
-        self.start_button.setGeometry(10, 550, 780, 30)
-        self.start_button.clicked.connect(self.start_processing)
-        self.start_button.setEnabled(False)  # The button is initially disabled
-
-        self.stop_button = QPushButton("Stop Processing", self)
-        self.processing_status_label = QLabel(self)
-        self.processing_status_label.setGeometry(10, 670, 780, 30)
-        self.stop_button.setGeometry(10, 590, 780, 30)
-        self.stop_button.clicked.connect(self.stop_processing)
-        self.stop_button.setEnabled(False)  # The button is initially disabled
-
         self.video_paths = []  # List to store multiple video paths
         self.video_threads = {}  # Dictionary to store threads for each video path
         self.current_video_index = 0  # Index to keep track of the currently displayed video
-
-        # Add navigation buttons
-        self.prev_button = QPushButton("Previous Video", self)
-        self.prev_button.setGeometry(370, 440, 180, 30)
-        self.prev_button.clicked.connect(self.previous_video)
-        self.prev_button.setEnabled(False)  # Initially disabled
-
-        self.next_button = QPushButton("Next Video", self)
-        self.next_button.setGeometry(550, 440, 180, 30)
-        self.next_button.clicked.connect(self.next_video)
-        self.next_button.setEnabled(False)  # Initially disabled
-
         self.latest_frames = {}  # Stores the latest frame for each video
         self.latest_mating_durations = {}  # Stores the latest mating durations for each video
         self.mating_start_times_dfs = {}  # Dictionary to store mating start times for each video
 
-        self.video_list_widget = QListWidget(self)
-        self.video_list_widget.setGeometry(10, 685, 780, 100)
+        # Apply a global stylesheet for a modern look
+        self.setStyleSheet("""
+            QGroupBox {
+                font-size: 16px;
+                font-weight: bold;
+            }
+            QPushButton {
+                background-color: #4CAF50;  # Green color for buttons
+                color: #FFF;
+                border: 1px solid #388E3C;
+                padding: 5px 15px;
+                border-radius: 5px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #388E3C;
+            }
+            QLabel, QLineEdit {
+                padding: 5px;
+            }
+            QListWidget {
+                border: 1px solid #555;
+            }
+        """)
 
-        self.video_thread = None
-        self.add_export_button()  # Add this line to create the "Export DataFrame" button
+        # Organize UI elements
+        self.init_ui()
+
+    def init_ui(self):
+        # Video Display & Info Section
+        video_display_group = QGroupBox("Video Display", self)
+        video_display_group.setGeometry(10, 10, 870, 500)
+
+        vbox = QVBoxLayout()
+
+        self.video_label = QLabel()
+        self.video_label.setFixedSize(860, 440)
+        vbox.addWidget(self.video_label)
+
+        hbox = QHBoxLayout()
+        self.frame_label = QLabel('Frame: 0')
+        hbox.addWidget(self.frame_label)
+        self.time_label = QLabel('Time (s): 0')
+        hbox.addWidget(self.time_label)
+        vbox.addLayout(hbox)
+
+        video_display_group.setLayout(vbox)
+
+        # Video Control Section
+        video_control_group = QGroupBox("Video Controls", self)
+        video_control_group.setGeometry(10, 520, 870, 110)
+
+        vbox = QVBoxLayout()
+
+        self.fps_input = QLineEdit()
+        self.fps_input.setPlaceholderText("Enter Video FPS")
+        vbox.addWidget(self.fps_input)
+
+        hbox = QHBoxLayout()
+        self.select_button = QPushButton("Select Video")
+        self.select_button.clicked.connect(self.select_video)
+        hbox.addWidget(self.select_button)
+
+        self.start_button = QPushButton("Start Processing")
+        self.start_button.clicked.connect(self.start_processing)
+        hbox.addWidget(self.start_button)
+
+        self.stop_button = QPushButton("Stop Processing")
+        self.stop_button.clicked.connect(self.stop_processing)
+        hbox.addWidget(self.stop_button)
+
+        vbox.addLayout(hbox)
+        video_control_group.setLayout(vbox)
+
+        # Video List Section
+        video_list_group = QGroupBox("Video List", self)
+        video_list_group.setGeometry(10, 640, 870, 120)
+
+        vbox = QVBoxLayout()
+
+        self.video_list_widget = QListWidget()
+        vbox.addWidget(self.video_list_widget)
+
+        video_list_group.setLayout(vbox)
+
+        # Mating Information Display Area
+        mating_info_area = QWidget(self)
+        mating_info_area.setGeometry(10, 750, 870, 150)
+
+        hbox = QHBoxLayout()
+
+        # Mating Duration Display
+        mating_duration_group = QGroupBox("Mating Durations", mating_info_area)
+        vbox = QVBoxLayout()
+        self.mating_duration_label = QLabel("Mating Durations:")
+        vbox.addWidget(self.mating_duration_label)
+        mating_duration_group.setLayout(vbox)
+        hbox.addWidget(mating_duration_group)
+
+        # Verified Mating Times Display
+        verified_times_group = QGroupBox("Verified Mating Times", mating_info_area)
+        vbox = QVBoxLayout()
+        self.verified_mating_times_label = QLabel("Verified Mating Times:")
+        vbox.addWidget(self.verified_mating_times_label)
+        verified_times_group.setLayout(vbox)
+        hbox.addWidget(verified_times_group)
+
+        mating_info_area.setLayout(hbox)
+
+        # Navigation Controls
+        nav_group = QGroupBox("Navigation", self)
+        nav_group.setGeometry(10, 900, 870, 80)
+
+        hbox = QHBoxLayout()
+
+        # Use arrow icons for previous and next buttons
+        self.prev_button = QPushButton("← Previous Video")
+        self.prev_button.clicked.connect(self.previous_video)
+        hbox.addWidget(self.prev_button)
+
+        self.next_button = QPushButton("Next Video →")
+        self.next_button.clicked.connect(self.next_video)
+        hbox.addWidget(self.next_button)
+
+        nav_group.setLayout(hbox)
+
+        # Export Functionality
+        export_group = QGroupBox("Data Export", self)
+        export_group.setGeometry(10, 965, 870, 80)
+
+        hbox = QHBoxLayout()
+
+        self.export_button = QPushButton("Export DataFrame")
+        self.export_button.clicked.connect(self.export_dataframe)
+        self.export_button.setToolTip("Export the mating data as a CSV file.")
+        hbox.addWidget(self.export_button)
+
+        self.processing_status_label = QLabel("Status: Awaiting action.")
+        hbox.addWidget(self.processing_status_label)
+
+        export_group.setLayout(hbox)
+
+    # Handle errors or other information that needs to be shown to the user
+    def show_error(self, message):
+        QMessageBox.critical(self, "Error", message)
+
+    def show_info(self, title, message):
+        QMessageBox.information(self, title, message)
 
     def add_export_button(self):
         self.export_button = QPushButton("Export DataFrame", self)
@@ -319,6 +417,9 @@ class MainWindow(QMainWindow):
                                                            mating_times_df['ROI']]
                     mating_times_df.to_csv(file_path, index=False)
                     self.processing_status_label.setText('DataFrame exported successfully.')
+                    QMessageBox.information(self, "Success", "DataFrame exported successfully.")
+                else:
+                    QMessageBox.warning(self, "Warning", "Export was canceled or failed.")
 
     def previous_video(self):
         if self.current_video_index > 0:
