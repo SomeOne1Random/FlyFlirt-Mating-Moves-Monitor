@@ -12,6 +12,7 @@ class VideoProcessingThread(QThread):
     frame_processed = pyqtSignal(str, np.ndarray, dict)
     frame_info = pyqtSignal(int, float)
     verified_mating_start_times = pyqtSignal(str, dict)
+    void_roi_signal = pyqtSignal(str, int)  # Signal to emit with video_path and void ROI ID
 
     def __init__(self, video_path, initial_contours, fps):
         super().__init__()
@@ -27,6 +28,10 @@ class VideoProcessingThread(QThread):
         self.mating_start_times_df = pd.DataFrame(columns=['ROI', 'Start Times'])  # Create an empty DataFrame to store mating start times
         self.latest_frames = {}  # Stores the latest frame for each video
         self.latest_mating_durations = {}  # Stores the latest mating durations for each video
+        self.flies_count_signal = pyqtSignal(str, int,
+                                             int)  # Signal to be emitted with video_path, ROI ID, and flies count
+        self.flies_count_per_ROI = {}  # Tracks the count of flies per ROI
+        self.void_rois = {}  # Dictionary to store void ROIs
 
     def export_combined_mating_times(self):
         combined_mating_times = {}
@@ -53,6 +58,7 @@ class VideoProcessingThread(QThread):
 
     def run(self):
         self.is_running = True
+        self.flies_count_per_ROI.clear()  # Reset flies count per ROI when a new video starts
 
         cap = cv2.VideoCapture(self.video_path)
 
@@ -138,7 +144,6 @@ class VideoProcessingThread(QThread):
         return processed_frame, masks
 
     def detect_flies(self, frame, masks, frame_count):
-        # Initialize blob detector parameters
         params = cv2.SimpleBlobDetector_Params()
         params.filterByArea = True
         params.minArea = 10
@@ -157,6 +162,10 @@ class VideoProcessingThread(QThread):
 
         # Iterate through each mask and detect flies
         for i, mask in enumerate(masks):
+            # If an ROI has been marked as void, continue to the next ROI
+            if self.void_rois.get(i, False):
+                continue
+
             # Apply the mask to the frame
             masked_frame = cv2.bitwise_and(frame, frame, mask=mask)
 
@@ -165,6 +174,23 @@ class VideoProcessingThread(QThread):
 
             # Detect blobs (flies)
             keypoints = detector.detect(gray)
+
+            # Detect flies count for the first 200 frames
+            if frame_count < 500:
+                flies_count = len(keypoints)
+                if i not in self.flies_count_per_ROI:
+                    self.flies_count_per_ROI[i] = []
+                self.flies_count_per_ROI[i].append(flies_count)
+
+                # If we've reached 200 frames, check the condition
+                if len(self.flies_count_per_ROI[i]) == 200:
+                    more_than_two = sum(count > 2 for count in self.flies_count_per_ROI[i]) == 200
+                    less_than_two = sum(count < 2 for count in self.flies_count_per_ROI[i]) == 200
+                    if more_than_two or less_than_two:
+                        # Mark the ROI as void
+                        self.void_rois[i] = True
+                        self.void_roi_signal.emit(self.video_path, i)  # Emit the signal
+
 
             # Draw dots on the frame for each detected fly (centroid), color depends on mating status
             if len(keypoints) == 1:  # A mating event is occurring
@@ -492,6 +518,7 @@ class MainWindow(QMainWindow):
                     video_thread.frame_processed.connect(self.update_video_frame)
                     video_thread.frame_processed.connect(self.update_video_frame)
                     video_thread.finished.connect(self.processing_finished)
+                    video_thread.void_roi_signal.connect(self.void_roi_handler)
                     video_thread.start()
 
             # Enable navigation buttons if there are multiple videos
@@ -499,8 +526,16 @@ class MainWindow(QMainWindow):
             self.next_button.setEnabled(len(self.video_paths) > 1)
 
     def stop_processing(self):
-        if self.video_thread.isRunning():
-            self.video_thread.stop()
+        # Stop all video threads
+        for video_thread in self.video_threads.values():
+            if video_thread and video_thread.is_running:
+                video_thread.stop()
+        # Update the status label to indicate that processing has stopped
+        self.processing_status_label.setText('Video processing stopped.')
+        # Re-enable the start and select buttons
+        self.start_button.setEnabled(True)
+        self.select_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
 
     def processing_finished(self):
         self.processing_status_label.setText('Video processing finished.')
@@ -544,6 +579,10 @@ class MainWindow(QMainWindow):
     def update_frame_info(self, frame, time):
         self.frame_label.setText(f'Frame: {frame}')
         self.time_label.setText(f'Time (s): {time:.2f}')
+
+    def void_roi_handler(self, video_path, roi_id):
+        # Handle the void ROI, perhaps by updating the UI or logging
+        print(f"ROI {roi_id} in video {video_path} has been marked as void.")
 
 
 if __name__ == "__main__":
