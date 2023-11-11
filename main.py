@@ -175,22 +175,25 @@ class VideoProcessingThread(QThread):
             # Detect blobs (flies)
             keypoints = detector.detect(gray)
 
-            # Detect flies count for the first 200 frames
+            # Detect flies count for the first 500 frames
             if frame_count < 500:
                 flies_count = len(keypoints)
                 if i not in self.flies_count_per_ROI:
                     self.flies_count_per_ROI[i] = []
                 self.flies_count_per_ROI[i].append(flies_count)
 
-                # If we've reached 200 frames, check the condition
+                # Check the condition after 200 frames
                 if len(self.flies_count_per_ROI[i]) == 200:
-                    more_than_two = sum(count > 2 for count in self.flies_count_per_ROI[i]) == 200
-                    less_than_two = sum(count < 2 for count in self.flies_count_per_ROI[i]) == 200
-                    if more_than_two or less_than_two:
+                    more_than_two_count = sum(count > 2 for count in self.flies_count_per_ROI[i])
+                    less_than_two_count = sum(count < 2 for count in self.flies_count_per_ROI[i])
+
+                    # Calculate 75% of 200 frames
+                    threshold = 200 * 0.75
+
+                    if more_than_two_count > threshold or less_than_two_count > threshold:
                         # Mark the ROI as void
                         self.void_rois[i] = True
                         self.void_roi_signal.emit(self.video_path, i)  # Emit the signal
-
 
             # Draw dots on the frame for each detected fly (centroid), color depends on mating status
             if len(keypoints) == 1:  # A mating event is occurring
@@ -259,30 +262,6 @@ class MainWindow(QMainWindow):
         self.latest_mating_durations = {}  # Stores the latest mating durations for each video
         self.mating_start_times_dfs = {}  # Dictionary to store mating start times for each video
 
-        # Apply a global stylesheet for a modern look
-        self.setStyleSheet("""
-            QGroupBox {
-                font-size: 16px;
-                font-weight: bold;
-            }
-            QPushButton {
-                background-color: #4CAF50;  # Green color for buttons
-                color: #FFF;
-                border: 1px solid #388E3C;
-                padding: 5px 15px;
-                border-radius: 5px;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #388E3C;
-            }
-            QLabel, QLineEdit {
-                padding: 5px;
-            }
-            QListWidget {
-                border: 1px solid #555;
-            }
-        """)
 
         # Organize UI elements
         self.init_ui()
@@ -420,27 +399,31 @@ class MainWindow(QMainWindow):
     def export_dataframe(self):
         for video_path, video_thread in self.video_threads.items():
             if video_thread:
-                # Extract the base name of the video (without extension) to use it as the default filename for export
                 default_export_name = video_path.rsplit('/', 1)[-1].rsplit('.', 1)[0] + '.csv'
                 file_path, _ = QFileDialog.getSaveFileName(self, f"Export DataFrame for {video_path}",
                                                            default_export_name,
                                                            "CSV Files (*.csv);;All Files (*)")
                 if file_path:
-                    mating_start_times = video_thread.mating_start_times
+                    mating_times_df = pd.DataFrame(video_thread.mating_start_times.items(),
+                                                   columns=['ROI', 'Start Time'])
 
-                    # Adjust mating start times by subtracting 360 seconds
-                    adjusted_mating_start_times = {roi_id: max(0, time - 360) for roi_id, time in
-                                                   mating_start_times.items()}
+                    # Add a column for longest mating duration
+                    longest_mating_durations = {roi_id: max(durations, default=0) for roi_id, durations in
+                                                video_thread.mating_durations.items()}
+                    mating_times_df['Longest Duration'] = mating_times_df['ROI'].map(longest_mating_durations)
 
-                    mating_times_df = pd.DataFrame(adjusted_mating_start_times.items(), columns=['ROI', 'Start Time'])
+                    # Add a column for fly count in each ROI
+                    fly_counts = {roi_id: np.mean(counts) for roi_id, counts in
+                                  video_thread.flies_count_per_ROI.items()}
+                    mating_times_df['Average Fly Count'] = mating_times_df['ROI'].map(fly_counts)
 
-                    # Calculate longest mating duration for each ROI from the stored lists
-                    longest_mating_durations = {}
-                    for roi_id, durations in video_thread.mating_durations.items():
-                        longest_mating_durations[roi_id] = max(durations, default=0)
+                    # Mark void ROIs as 'N/A'
+                    void_rois = video_thread.void_rois
+                    mating_times_df['Start Time'] = mating_times_df.apply(
+                        lambda row: 'N/A' if void_rois.get(row['ROI'], False) else row['Start Time'], axis=1)
+                    mating_times_df['Longest Duration'] = mating_times_df.apply(
+                        lambda row: 'N/A' if void_rois.get(row['ROI'], False) else row['Longest Duration'], axis=1)
 
-                    mating_times_df['Longest Duration'] = [longest_mating_durations.get(roi_id, 0) for roi_id in
-                                                           mating_times_df['ROI']]
                     mating_times_df.to_csv(file_path, index=False)
                     self.processing_status_label.setText('DataFrame exported successfully.')
                     QMessageBox.information(self, "Success", "DataFrame exported successfully.")
