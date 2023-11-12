@@ -404,25 +404,29 @@ class MainWindow(QMainWindow):
                                                            default_export_name,
                                                            "CSV Files (*.csv);;All Files (*)")
                 if file_path:
-                    mating_times_df = pd.DataFrame(video_thread.mating_start_times.items(),
-                                                   columns=['ROI', 'Start Time'])
+                    # Adjust mating start times and add columns for longest duration and fly count
+                    data = []
+                    num_rois = len(video_thread.initial_contours)
+                    for roi in range(num_rois):
+                        start_time = video_thread.mating_start_times.get(roi, 'N/A')
+                        start_time = 'N/A' if start_time == 'N/A' else max(0, start_time - 360)
 
-                    # Add a column for longest mating duration
-                    longest_mating_durations = {roi_id: max(durations, default=0) for roi_id, durations in
-                                                video_thread.mating_durations.items()}
-                    mating_times_df['Longest Duration'] = mating_times_df['ROI'].map(longest_mating_durations)
+                        # Check the longest duration and set it to 0 if less than 360
+                        longest_duration = max(video_thread.mating_durations.get(roi, [0]), default=0)
+                        longest_duration = 0 if longest_duration < 360 else longest_duration
 
-                    # Add a column for fly count in each ROI
-                    fly_counts = {roi_id: np.mean(counts) for roi_id, counts in
-                                  video_thread.flies_count_per_ROI.items()}
-                    mating_times_df['Average Fly Count'] = mating_times_df['ROI'].map(fly_counts)
+                        average_fly_count = np.mean(video_thread.flies_count_per_ROI.get(roi, ['N/A']))
+
+                        data.append({'ROI': roi, 'Adjusted Start Time': start_time,
+                                     'Longest Duration': longest_duration, 'Average Fly Count': average_fly_count})
+
+                    mating_times_df = pd.DataFrame(data)
 
                     # Mark void ROIs as 'N/A'
                     void_rois = video_thread.void_rois
-                    mating_times_df['Start Time'] = mating_times_df.apply(
-                        lambda row: 'N/A' if void_rois.get(row['ROI'], False) else row['Start Time'], axis=1)
-                    mating_times_df['Longest Duration'] = mating_times_df.apply(
-                        lambda row: 'N/A' if void_rois.get(row['ROI'], False) else row['Longest Duration'], axis=1)
+                    for column in ['Adjusted Start Time', 'Longest Duration', 'Average Fly Count']:
+                        mating_times_df[column] = mating_times_df.apply(
+                            lambda row: 'N/A' if void_rois.get(row['ROI'], False) else row[column], axis=1)
 
                     mating_times_df.to_csv(file_path, index=False)
                     self.processing_status_label.setText('DataFrame exported successfully.')
