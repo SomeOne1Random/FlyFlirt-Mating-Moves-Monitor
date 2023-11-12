@@ -14,7 +14,7 @@ class VideoProcessingThread(QThread):
     verified_mating_start_times = pyqtSignal(str, dict)
     void_roi_signal = pyqtSignal(str, int)  # Signal to emit with video_path and void ROI ID
 
-    def __init__(self, video_path, initial_contours, fps):
+    def __init__(self, video_path, initial_contours, fps, skip_frames=0):
         super().__init__()
         self.video_path = video_path
         self.initial_contours = initial_contours
@@ -32,6 +32,7 @@ class VideoProcessingThread(QThread):
                                              int)  # Signal to be emitted with video_path, ROI ID, and flies count
         self.flies_count_per_ROI = {}  # Tracks the count of flies per ROI
         self.void_rois = {}  # Dictionary to store void ROIs
+        self.skip_frames = skip_frames  # Number of frames to skip from the beginning
 
     def export_combined_mating_times(self):
         combined_mating_times = {}
@@ -61,6 +62,12 @@ class VideoProcessingThread(QThread):
         self.flies_count_per_ROI.clear()  # Reset flies count per ROI when a new video starts
 
         cap = cv2.VideoCapture(self.video_path)
+
+        # Skip the specified number of frames
+        for _ in range(self.skip_frames):
+            ret, _ = cap.read()
+            if not ret:
+                break
 
         frame_count = 0
         current_frame = 0
@@ -250,7 +257,7 @@ class MainWindow(QMainWindow):
 
         # Set up the main window attributes
         self.setWindowTitle("Fly Behavior Analysis")
-        self.setGeometry(200, 200, 900, 1400)  # Adjust size as needed
+        self.setGeometry(200, 200, 1200, 1400)  # Adjust size as needed
 
         # Paths and initial setups
         self.video_path = None
@@ -261,6 +268,7 @@ class MainWindow(QMainWindow):
         self.latest_frames = {}  # Stores the latest frame for each video
         self.latest_mating_durations = {}  # Stores the latest mating durations for each video
         self.mating_start_times_dfs = {}  # Dictionary to store mating start times for each video
+
 
 
         # Organize UI elements
@@ -367,6 +375,10 @@ class MainWindow(QMainWindow):
         # Export Functionality
         export_group = QGroupBox("Data Export", self)
         export_group.setGeometry(10, 965, 870, 80)
+
+        self.skip_frames_input = QLineEdit(self)
+        self.skip_frames_input.setPlaceholderText("Enter number of frames to skip")
+        self.skip_frames_input.setGeometry(1000, 20, 200, 30)  # x, y, width, height
 
         hbox = QHBoxLayout()
 
@@ -495,9 +507,11 @@ class MainWindow(QMainWindow):
             self.select_button.setEnabled(False)
             self.stop_button.setEnabled(True)
             fps = float(self.fps_input.text())
+            # Retrieve the skip frames value
+            skip_frames = int(self.skip_frames_input.text()) if self.skip_frames_input.text().isdigit() else 0
             for video_path in self.video_paths:
                 if video_path not in self.video_threads or not self.video_threads[video_path]:
-                    video_thread = VideoProcessingThread(video_path, [], fps)
+                    video_thread = VideoProcessingThread(video_path, [], fps, skip_frames)
                     self.video_threads[video_path] = video_thread
                     # Connect signals
                     video_thread.verified_mating_start_times.connect(self.update_verified_mating_times)
