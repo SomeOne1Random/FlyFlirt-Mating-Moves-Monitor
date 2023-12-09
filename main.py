@@ -518,16 +518,15 @@ class MainWindow(QMainWindow):
                         start_time = video_thread.mating_start_times.get(roi, 'N/A')
                         start_time = 'N/A' if start_time == 'N/A' else max(0, start_time - 360)
 
-                        longest_duration = max(video_thread.mating_durations.get(roi, [0]), default=0)
+                        durations = video_thread.mating_durations.get(roi, [])
+                        longest_duration = max(durations, default=0)
                         longest_duration = 0 if longest_duration < 360 else longest_duration
 
-                        average_fly_count = np.mean(video_thread.flies_count_per_ROI.get(roi, ['N/A']))
-
-                        mating_status = video_thread.mating_status_per_ROI.get(roi, False)
+                        # Mating status is true if the most recent mating event lasted at least 360 seconds
+                        mating_status = durations[-1] >= 360 if durations else False
 
                         data.append({'ROI': roi, 'Adjusted Start Time': start_time,
                                      'Longest Duration': longest_duration,
-                                     'Average Fly Count': average_fly_count,
                                      'Mating Status': mating_status})
 
                     # Create DataFrame
@@ -535,7 +534,7 @@ class MainWindow(QMainWindow):
 
                     # Mark void ROIs as 'N/A'
                     void_rois = video_thread.void_rois
-                    for column in ['Adjusted Start Time', 'Longest Duration', 'Average Fly Count', 'Mating Status']:
+                    for column in ['Adjusted Start Time', 'Longest Duration', 'Mating Status']:
                         mating_times_df[column] = mating_times_df.apply(
                             lambda row: 'N/A' if void_rois.get(row['ROI'], False) else row[column], axis=1)
 
