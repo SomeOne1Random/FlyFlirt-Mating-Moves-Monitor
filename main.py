@@ -33,6 +33,12 @@ class VideoProcessingThread(QThread):
         self.flies_count_per_ROI = {}  # Tracks the count of flies per ROI
         self.void_rois = {}  # Dictionary to store void ROIs
         self.skip_frames = skip_frames  # Number of frames to skip from the beginning
+        self.previous_flies_count_per_ROI = {}  # Tracks previous frame's fly count per ROI
+        self.mating_event_detected = {}  # Tracks if a mating event is detected in an ROI
+        self.previous_fly_positions_per_ROI = {}  # Tracks previous frame's fly positions per ROI when there are two flies
+        self.mating_status_per_ROI = {}  # New dictionary to store mating status for each ROI
+        self.mating_event_ongoing = {}  # Tracks ongoing mating events for each ROI
+
 
     def export_combined_mating_times(self):
         combined_mating_times = {}
@@ -85,6 +91,9 @@ class VideoProcessingThread(QThread):
 
             # Emit the video path along with the processed frame and the mating durations
             self.frame_processed.emit(self.video_path, processed_frame, self.mating_durations)
+
+            for roi_id, is_mating in self.mating_event_ongoing.items():
+                self.mating_status_per_ROI[roi_id] = is_mating
 
             frame_count += 1
 
@@ -145,8 +154,27 @@ class VideoProcessingThread(QThread):
             # Exclude contours near the edges of the frame if edge duration is less than a threshold
             if (x > 5 and y > 5 and (x + w) < frame.shape[1] - 5 and (y + h) < frame.shape[
                 0] - 5) or edge_duration >= 90:
+                cv2.circle(processed_frame, (int(x + w / 2), int(y + h / 2)), int((w + h) / 4), (0, 255, 0), 4)
                 ellipse = cv2.fitEllipse(contour)
                 cv2.ellipse(processed_frame, ellipse, (0, 255, 0), 2)
+
+        for i, contour_data in enumerate(initial_contours):
+            contour = contour_data["contour"]
+            (x, y, w, h) = cv2.boundingRect(contour)
+
+            # Use the index in the initial_contours list as the ROI ID
+            roi_id = i  # Adding 1 to start IDs from 1 instead of 0
+
+            # Calculate the center of the bounding circle
+            center_x = int(x + w / 2)
+            center_y = int(y + h / 2)
+
+            # Determine the position for the ROI number (further above the center)
+            text_position = (center_x, center_y - 55)  # Increase the vertical offset as needed
+
+            # Draw the ROI number in pink
+            cv2.putText(processed_frame, str(roi_id), text_position, cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5, (255, 105, 180), 2, cv2.LINE_AA)  # Pink color
 
         return processed_frame, masks
 
@@ -165,7 +193,7 @@ class VideoProcessingThread(QThread):
         radius = 6  # Increase the radius for larger dots
         thickness = -1  # Set the thickness to a negative value for a hollow circle
 
-        grace_frames_threshold = int(self.fps)  # Number of frames equivalent to 1 second
+        grace_frames_threshold = int(self.fps * 3)  # Number of frames equivalent to 2 seconds
 
         # Iterate through each mask and detect flies
         for i, mask in enumerate(masks):
@@ -176,18 +204,39 @@ class VideoProcessingThread(QThread):
             # Apply the mask to the frame
             masked_frame = cv2.bitwise_and(frame, frame, mask=mask)
 
-            # Convert the masked frame to grayscale
+            # Convert the masked frame to grayscale (if not already done)
             gray = cv2.cvtColor(masked_frame, cv2.COLOR_BGR2GRAY)
 
-            # Detect blobs (flies)
+            # Continue with the existing blob detection
+            detector = cv2.SimpleBlobDetector_create(params)
             keypoints = detector.detect(gray)
 
             # Detect flies count for the first 500 frames
             if frame_count < 500:
                 flies_count = len(keypoints)
+                current_positions = [keypoint.pt for keypoint in keypoints]
+
+                # Check for mating event when there's a transition from two to one fly
+                if flies_count == 1 and i in self.previous_fly_positions_per_ROI:
+                    prev_positions = self.previous_fly_positions_per_ROI[i]
+                    # Ensure prev_positions has exactly two elements
+                    if len(prev_positions) == 2:
+                        distance_between_flies = np.linalg.norm(
+                            np.array(prev_positions[0]) - np.array(prev_positions[1]))
+                        if distance_between_flies > 30:
+                            self.mating_event_detected[i] = True
+                    # Clear the stored positions after checking
+                    del self.previous_fly_positions_per_ROI[i]
+
+                # Only store positions when there are exactly two flies
+                elif flies_count == 2:
+                    self.previous_fly_positions_per_ROI[i] = current_positions
+
                 if i not in self.flies_count_per_ROI:
                     self.flies_count_per_ROI[i] = []
                 self.flies_count_per_ROI[i].append(flies_count)
+
+                self.previous_fly_positions_per_ROI[i] = current_positions
 
                 # Check the condition after 200 frames
                 if len(self.flies_count_per_ROI[i]) == 200:
@@ -197,13 +246,16 @@ class VideoProcessingThread(QThread):
                     # Calculate 75% of 200 frames
                     threshold = 200 * 0.75
 
-                    if more_than_two_count > threshold or less_than_two_count > threshold:
-                        # Mark the ROI as void
+                    # Adjust the logic to not mark the ROI as void if a mating event is detected
+                    if more_than_two_count > threshold or (
+                            less_than_two_count > threshold and not self.mating_event_detected.get(i, False)):
                         self.void_rois[i] = True
                         self.void_roi_signal.emit(self.video_path, i)  # Emit the signal
 
             # Draw dots on the frame for each detected fly (centroid), color depends on mating status
             if len(keypoints) == 1:  # A mating event is occurring
+                self.mating_event_ongoing[i] = True
+
                 x = int(keypoints[0].pt[0])
                 y = int(keypoints[0].pt[1])
 
@@ -233,6 +285,7 @@ class VideoProcessingThread(QThread):
 
             else:  # Mating event has potentially ended
                 # Increase grace frames counter for this ROI
+                self.mating_event_ongoing[i] = False
                 self.mating_grace_frames[i] = self.mating_grace_frames.get(i, 0) + 1
 
                 # If grace frames counter exceeds threshold, consider the mating event to have ended
@@ -246,10 +299,16 @@ class VideoProcessingThread(QThread):
                     y = int(keypoint.pt[1])
                     cv2.circle(frame, (x, y), radius, (0, 0, 255), thickness)  # Red dot
 
+
         self.frame_processed.emit(self.video_path, frame, self.mating_durations)
 
     def generate_contour_id(self, contour):
         return cv2.contourArea(contour)
+
+    def void_roi(self, roi_id):
+        self.void_rois[roi_id] = True
+        self.void_roi_signal.emit(self.video_path, roi_id)  # Emit the signal to indicate a void ROI
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -268,9 +327,6 @@ class MainWindow(QMainWindow):
         self.latest_frames = {}  # Stores the latest frame for each video
         self.latest_mating_durations = {}  # Stores the latest mating durations for each video
         self.mating_start_times_dfs = {}  # Dictionary to store mating start times for each video
-
-
-
         # Organize UI elements
         self.init_ui()
 
@@ -337,21 +393,31 @@ class MainWindow(QMainWindow):
 
         hbox = QHBoxLayout()
 
-        # Mating Duration Display
+        # Mating Duration Display with Scrollable Area
         mating_duration_group = QGroupBox("Mating Durations", mating_info_area)
         vbox = QVBoxLayout()
         self.mating_duration_label = QLabel("Mating Durations:")
         vbox.addWidget(self.mating_duration_label)
-        mating_duration_group.setLayout(vbox)
-        hbox.addWidget(mating_duration_group)
 
-        # Verified Mating Times Display
+        # Create a scroll area for mating durations
+        mating_duration_scroll = QScrollArea()
+        mating_duration_scroll.setWidgetResizable(True)
+        mating_duration_scroll.setWidget(mating_duration_group)
+        mating_duration_group.setLayout(vbox)
+        hbox.addWidget(mating_duration_scroll)
+
+        # Verified Mating Times Display with Scrollable Area
         verified_times_group = QGroupBox("Verified Mating Times", mating_info_area)
         vbox = QVBoxLayout()
         self.verified_mating_times_label = QLabel("Verified Mating Times:")
         vbox.addWidget(self.verified_mating_times_label)
+
+        # Create a scroll area for verified mating times
+        verified_times_scroll = QScrollArea()
+        verified_times_scroll.setWidgetResizable(True)
+        verified_times_scroll.setWidget(verified_times_group)
         verified_times_group.setLayout(vbox)
-        hbox.addWidget(verified_times_group)
+        hbox.addWidget(verified_times_scroll)
 
         mating_info_area.setLayout(hbox)
 
@@ -392,12 +458,41 @@ class MainWindow(QMainWindow):
 
         export_group.setLayout(hbox)
 
+        self.roi_control_group = QGroupBox("Manual ROI Control", self)
+        self.roi_control_group.setGeometry(890, 35, 300, 80)  # Adjust the position and size as needed
+
+        roi_control_layout = QHBoxLayout()
+
+        self.roi_id_input = QLineEdit(self)
+        self.roi_id_input.setPlaceholderText("Enter ROI ID")
+        roi_control_layout.addWidget(self.roi_id_input)
+
+        self.void_roi_button = QPushButton("Void ROI", self)
+        self.void_roi_button.clicked.connect(self.void_roi)
+        roi_control_layout.addWidget(self.void_roi_button)
+
+        self.roi_control_group.setLayout(roi_control_layout)
+
     # Handle errors or other information that needs to be shown to the user
     def show_error(self, message):
         QMessageBox.critical(self, "Error", message)
 
     def show_info(self, title, message):
         QMessageBox.information(self, title, message)
+
+    def void_roi(self):
+        try:
+            roi_id = int(self.roi_id_input.text())
+            current_video_path = self.video_paths[self.current_video_index]
+            video_thread = self.video_threads.get(current_video_path)
+            if video_thread:
+                video_thread.void_roi(roi_id)
+                print(f"Manually voided ROI {roi_id} in video {current_video_path}")
+            else:
+                self.show_error("No video thread found for the current video.")
+        except ValueError:
+            self.show_error("Invalid ROI ID entered.")
+
 
     def add_export_button(self):
         self.export_button = QPushButton("Export DataFrame", self)
@@ -416,30 +511,35 @@ class MainWindow(QMainWindow):
                                                            default_export_name,
                                                            "CSV Files (*.csv);;All Files (*)")
                 if file_path:
-                    # Adjust mating start times and add columns for longest duration and fly count
+                    # Prepare data for export
                     data = []
                     num_rois = len(video_thread.initial_contours)
                     for roi in range(num_rois):
                         start_time = video_thread.mating_start_times.get(roi, 'N/A')
                         start_time = 'N/A' if start_time == 'N/A' else max(0, start_time - 360)
 
-                        # Check the longest duration and set it to 0 if less than 360
                         longest_duration = max(video_thread.mating_durations.get(roi, [0]), default=0)
                         longest_duration = 0 if longest_duration < 360 else longest_duration
 
                         average_fly_count = np.mean(video_thread.flies_count_per_ROI.get(roi, ['N/A']))
 
-                        data.append({'ROI': roi, 'Adjusted Start Time': start_time,
-                                     'Longest Duration': longest_duration, 'Average Fly Count': average_fly_count})
+                        mating_status = video_thread.mating_status_per_ROI.get(roi, False)
 
+                        data.append({'ROI': roi, 'Adjusted Start Time': start_time,
+                                     'Longest Duration': longest_duration,
+                                     'Average Fly Count': average_fly_count,
+                                     'Mating Status': mating_status})
+
+                    # Create DataFrame
                     mating_times_df = pd.DataFrame(data)
 
                     # Mark void ROIs as 'N/A'
                     void_rois = video_thread.void_rois
-                    for column in ['Adjusted Start Time', 'Longest Duration', 'Average Fly Count']:
+                    for column in ['Adjusted Start Time', 'Longest Duration', 'Average Fly Count', 'Mating Status']:
                         mating_times_df[column] = mating_times_df.apply(
                             lambda row: 'N/A' if void_rois.get(row['ROI'], False) else row[column], axis=1)
 
+                    # Export to CSV
                     mating_times_df.to_csv(file_path, index=False)
                     self.processing_status_label.setText('DataFrame exported successfully.')
                     QMessageBox.information(self, "Success", "DataFrame exported successfully.")
